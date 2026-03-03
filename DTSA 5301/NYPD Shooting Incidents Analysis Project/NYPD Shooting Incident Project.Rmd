@@ -1,0 +1,265 @@
+---
+title: "Analyzing the Patterns and Trends of NYC Shooting Incidents (2006-2026)"
+author: "Tim Greenli"
+date: "2026-02-13"
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE}
+# Import Necessary Libraries
+
+library(tidyverse)
+library(knitr)
+```
+
+# Introduction
+
+This project serves as learning tool for the course *DTSA 5301: Data Science as a Field* for the Master of Science in Data Science program at CU Boulder. It aims to analyze shooting incidents in New York City from 2006 to 2026.
+
+Data Sources:
+
+-   [**NYC Shootings (2006-Present)**](https://data.cityofnewyork.us/Public-Safety/Shootings-2006-Present-/5ucz-vwe8/about_data): Records of shootings reported by the the New York Police Department.
+
+-   [**NYC Shooting Offenders (2006-Present)**](https://data.cityofnewyork.us/Public-Safety/Shooting-Offenders-2006-Present-/gdk4-mbsv/about_data): Information on individuals arrested for shooting incidents.
+
+# Tidy and Transform
+
+```{r import data, message=FALSE}
+# Import Data Sources
+
+url_shootings <- "https://data.cityofnewyork.us/resource/5ucz-vwe8.csv"
+url_offenders <- "https://data.cityofnewyork.us/resource/gdk4-mbsv.csv"
+
+shootings <- read_csv(url_shootings)
+offenders <- read_csv(url_offenders)
+```
+
+```{r data types}
+# Column Data Types and Data Cleaning
+
+shootings <- shootings %>%
+  mutate(
+    occur_date = ymd(occur_date),
+    precinct = factor(precinct),
+    location_desc = str_to_title(location_desc),
+    loc_of_occur_desc = str_to_title(loc_of_occur_desc),
+    location_desc = replace_na(location_desc, "Not Reported"),
+    location_desc = ifelse(location_desc == "None", "Not Reported", location_desc)
+  )
+
+offenders <- offenders %>% 
+  mutate(
+    perp_age_group = replace_na(perp_age_group, "UNKNOWN"),
+    perp_age_group = ifelse(perp_age_group == "UNKNOWN", "Unknown", perp_age_group),
+    perp_race = str_to_title(perp_race),
+    perp_sex = str_to_title(perp_sex)
+  )
+```
+
+```{r}
+# Join Tables
+
+shooting_cases <- inner_join(shootings, offenders, by = "incident_key")
+```
+
+# Visualization and Analysis
+
+## Where Incidents are Happening
+
+### Occuring Indoors or Outdoors
+
+```{r inside or outside}
+# Display Indoor or Outdoor
+
+shooting_cases %>% 
+  group_by(loc_of_occur_desc) %>% 
+  summarise(incidents = n()) %>%
+  arrange(desc(incidents)) %>% 
+  kable(col.names = c("Location", "Incidents"))
+```
+
+**Interpretation**: The majority of the incidents occurred outside.
+
+### By Location Description
+
+```{r location description}
+# Create Location Description Table
+
+by_loc <- shooting_cases %>% 
+  group_by(location_desc) %>% 
+  summarise(incidents = n()) %>% 
+  arrange(desc(incidents))
+
+by_loc %>% 
+  kable(col.names = c("Location", "Incidents"))
+```
+
+```{r visualization}
+# Chart of Incidents by Location Description
+
+by_loc %>% 
+  ggplot(aes(x = fct_reorder(location_desc, incidents, .desc = TRUE), y = incidents)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Incidents by Location Type",
+    x = "Location Description",
+    y = "Incident Count"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Interpretation**: The majority of incidents are occurring in multi-family public housing with a significant amount of data missing or that wasn't reported.
+
+### By Precinct
+
+```{r precinct}
+# Create by Precinct Table and Display Chart
+
+by_precinct <- shootings %>% 
+  group_by(precinct) %>% 
+  summarise(incidents = n())
+
+by_precinct %>% 
+  ggplot(aes(x = precinct, y = incidents)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Incidents by Precinct",
+    x = "Precinct",
+    y = "Incident Count"
+  )
+```
+
+**Interpretation**: Precincts 23, 25, 28, and 32 are the most active for reported shootings.
+
+## Perpetrator Demographics
+
+### Age Group
+
+```{r age group}
+# Display Age Group Counts
+
+shooting_cases %>% 
+  group_by(perp_age_group) %>% 
+  summarise(incidents = n()) %>% 
+  kable(col.names = c("Age Group", "Incidents"))
+```
+
+### Race
+
+```{r race}
+# Display Race Counts
+
+shooting_cases %>% 
+  group_by(perp_race) %>% 
+  summarise(incidents = n()) %>% 
+  kable(col.names = c("Race", "Incidents"))
+```
+
+### Sex
+
+```{r sex}
+# Display Sex Counts
+
+shooting_cases %>% 
+  group_by(perp_sex) %>% 
+  summarise(incidents = n()) %>% 
+  kable(col.names = c("Sex", "Incidents"))
+```
+
+
+## Yearly Incidents and Change Over Time
+
+```{r shootings over time}
+# Calculate Number of Incidents Each Year
+
+by_year <- shootings %>%
+  mutate(year = year(occur_date)) %>% 
+  group_by(year) %>% 
+  summarise(
+    total_incidents = n()
+  )
+```
+
+### Incidents Each Year
+
+This chart counts the number actual of shooting incidents occurring each year with the predicted values shown as the orange line that is based on a regression model.
+
+```{r}
+# Model and Display Predictions
+
+model_total <- lm(total_incidents ~ year, data = by_year)
+
+by_year_w_preds <- by_year %>% mutate(predicted = predict(model_total))
+
+by_year_w_preds %>% 
+  ggplot() +
+  geom_col(aes(x = year, y = total_incidents), fill = "steelblue") +
+  geom_point(aes(x = year, y = predicted), color = "red") +
+  geom_line(aes(x = year, y = predicted), color = "darkorange") +
+  labs(
+    title = "Total Incidents by Year",
+    x = "Year",
+    y = "Incidents"
+  )
+```
+
+**Interpretation**: Total cases per year show a clear downward trend.
+
+### Change Over Time
+
+This chart highlights the change in shooting incidents per year. A zero change can be seen by the marker in the middle of the vertical axis. Each observation shows the positive or negative change in incidents from the previous year.
+
+```{r change in year, warnings=FALSE}
+# Model and Display Predictions
+
+change_by_year <- by_year %>% 
+  mutate(change_yoy = total_incidents - lag(total_incidents)) %>% 
+  drop_na()
+
+model_yoy <- lm(change_yoy ~ year, data = change_by_year)
+
+change_by_year_with_preds <- change_by_year %>% mutate(pred = predict(model_yoy))
+
+change_by_year_with_preds %>% 
+  ggplot() +
+  geom_point(aes(x = year, y = change_yoy),color = "red") +
+  geom_line(aes(x = year, y = change_yoy), color = "steelblue") +
+  geom_line(aes(x = year, y = pred), color = "darkorange") +
+  labs(
+    title = "Shooting Incident Changes by Year",
+    x = "Year",
+    y = "Change in Shootings"
+  )
+```
+
+**Interpretation**: There does not seem to be any discernible pattern as to why incidents go up or down each year, but the overall trend reflects the decline in total shootings seen in the total cases per year graph above.
+
+# Conclusion
+
+## Results
+
+The data indicates that there is a downward trend in the total shooting incidents over the years. However, It it difficult to determine offender characteristics due to such a small number of incedents matching the offenders in the database. These incidents appear to take place in multi-family publich housing, with a significant about of locations not being reported. Under reporting of both incidents and other characteristics of the incidents poses some challenges for accurately assessing the true scope of gun violence in the city.
+
+## Bias
+
+The analysis reveals several potential sources of bias that may be present in the NYPD shooting data that may affect interpretation:
+
+-   **Data Collection Methods**: Relying solely on police report record can overlook unreported incidents or those recorded incorrectly. Additionally, only a small subset of shooting and offender data have matching incident keys. This leaves a large amount of data incomplete and presents an uneven representation of offender attributes.
+-   **Community Trust**: In communities that are distrustful of law enforcement, shootings may be less likely to be reported to the NYPD.
+-   **Demographic Variability**: Certain precincts or boroughs may have varying population densities and demographics. This could lead to different policing policies, uneven focus on certain geographic areas, and simply because areas with higher population density naturally record more incidents.
+-   **Demographic Attributes**: Attributes like "perp_age_group," "perp_sex," and "perp_race" may not accurately represent the demographics of those affected or be too generalized, as they can be influenced by broader societal biases.
+-   **Pre-Existing Biases**: Factors related to race, ethnicity, and socio-economic status can significantly impact the data collection and reporting process. This further complicates the social context of policing and reporting.
+
+On a personal level, i've identified some biases that may be influencing my analysis:
+
+-   **Distrust in Single Source of Data**: I belive I may assume that a single source of data is often biasded and innacurate due to lack of verification from other independent sources.
+-   **Interpreting Local Contect**: Being familiar with issues in my own regional context and potentially applying that same understanding to a different regional context.
+-   **Assumptions Based on Family Originn**: I may be projecting biases from a limited understanding of the region because my family is from there. My knowledge of the context comes from then, and I have limited firsthand experience.
